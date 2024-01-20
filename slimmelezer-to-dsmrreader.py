@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-from datetime import datetime
+from datetime import datetime, timezone
 import math
-import json
 import aioesphomeapi
 import requests
 from requests.packages.urllib3.exceptions import InsecureRequestWarning
@@ -47,6 +46,7 @@ entities_dsmr = {
     'SlimmeLezer Wi-Fi BSSID': None,
     'ESPHome Version': None
 }
+
 
 class DSMR_reading:
 
@@ -109,40 +109,64 @@ class DSMR_reading:
         else:
             return False
 
+
 def create_dsmr_reading(reading):
     # Maybe switch to aiohttp in the future, but simple requests seems to work fine for now
     headers = {'X-AUTHKEY': f'{config.API_KEY}',
                'Content-type': 'application/json'}
-    response = requests.post(config.API_URL, json=reading, headers=headers, verify=False)
-    return response
+    try:
+        response = requests.post(config.API_URL, json=reading, headers=headers, verify=False, timeout=10)
+        return response
+    except Exception as e:
+        ts = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        print(f"{ts} Error writing to DSMR: {e}")
+        return None
+
 
 async def main():
-    cli = aioesphomeapi.APIClient(config.ESPHOME_HOST, config.ESPHOME_PORT, config.ESPHOME_PASSWORD)
-    await cli.connect(login=True)
+    attempt = 0
+    attempt_timeout = config.ATTEMPT_TIMEOUT
+    max_attempts = config.MAX_ATTEMPTS
 
-    sensors, services = await cli.list_entities_services()
-    sensor_by_keys = dict((sensor.key, sensor.name) for sensor in sensors)
+    while attempt < max_attempts:
+        try:
+            cli = aioesphomeapi.APIClient(config.ESPHOME_HOST, config.ESPHOME_PORT, config.ESPHOME_PASSWORD)
+            await asyncio.wait_for(cli.connect(login=True), timeout=attempt_timeout)
+            sensors, services = await cli.list_entities_services()
+            sensor_by_keys = dict((sensor.key, sensor.name) for sensor in sensors)
 
-    def cb(state):
-        global r
-        if type(state) == aioesphomeapi.SensorState:
-            entity = sensor_by_keys[state.key]
-            dsmr_ent = entities_dsmr[entity]
-            if dsmr_ent is not None:
-                ts = datetime.now().strftime('%Y-%m-%dT%H:%M:%SZ')
-                if r.timestamp != ts:
-                    # Write previous reading to DSMR-reader
-                    j = r.jsonreading()
-                    if j:
-                        create_dsmr_reading(j)
-                        print(r.timestamp)
+            def cb(state):
+                global r
+                if isinstance(state, aioesphomeapi.SensorState):
+                    entity = sensor_by_keys[state.key]
+                    dsmr_ent = entities_dsmr[entity]
+                    if dsmr_ent is not None:
+                        ts = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+                        if r.timestamp != ts:
+                            # Write previous reading to DSMR-reader
+                            j = r.jsonreading()
+                            if j is not None:
+                                result = str(create_dsmr_reading(j))
+                                print(f"{r.timestamp} Success! {result}")
 
-                    # Start new reading
-                    r = DSMR_reading(ts)
-                if not math.isnan(state.state):
-                    setattr(r, entities_dsmr[sensor_by_keys[state.key]], state.state)
+                            # Start new reading
+                            r = DSMR_reading(ts)
+                        if not math.isnan(state.state):
+                            setattr(r, entities_dsmr[sensor_by_keys[state.key]], state.state)
 
-    await cli.subscribe_states(cb)
+            await asyncio.wait_for(cli.subscribe_states(cb), timeout=60)
+            return
+
+        except asyncio.TimeoutError as e:
+            ts = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+            print(f"{ts} Connection problem: {e}, retrying... (attempt {attempt + 1} of {max_attempts})")
+            attempt += 1
+        except Exception as e:
+            ts = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+            print(f"{ts} Unknown error: {e}")
+            break
+
+    print(f"Maximum number of attempts {max_attempts} reached. Ending program.")
 
 r = DSMR_reading(None)
 loop = asyncio.get_event_loop()

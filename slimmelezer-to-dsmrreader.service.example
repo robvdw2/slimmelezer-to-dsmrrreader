@@ -1,0 +1,12 @@
+[Unit]
+Description=Transfer data from Slimmelezer+ to DSMR Reader
+
+[Service]
+User=rob
+WorkingDirectory=/home/rob/slimmelezer-to-dsmrreader
+ExecStart=/home/rob/slimmelezer-to-dsmrreader/env/bin/python3 /home/rob/slimmelezer-to-dsmrreader/slimmelezer-to-dsmrreader.py
+Restart=always
+RestartSec=10s
+
+[Install]
+WantedBy=multi-user.target
