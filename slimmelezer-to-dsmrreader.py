@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 import math
 import aioesphomeapi
 import requests
-from requests.packages.urllib3.exceptions import InsecureRequestWarning
+from urllib3.exceptions import InsecureRequestWarning
 import asyncio
 import config
 
@@ -115,7 +115,7 @@ def create_dsmr_reading(reading):
     headers = {'X-AUTHKEY': f'{config.API_KEY}',
                'Content-type': 'application/json'}
     try:
-        response = requests.post(config.API_URL, json=reading, headers=headers, verify=False, timeout=10)
+        response = requests.post(config.READING_URL, json=reading, headers=headers, verify=False, timeout=10)
         return response
     except Exception as e:
         ts = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
